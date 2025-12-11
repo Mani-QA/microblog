@@ -1,0 +1,16 @@
+name = "microblog"
+main = "src/index.ts"
+compatibility_date = "2024-12-08"
+
+# Assets configuration for Workers with Assets deployment model
+[assets]
+directory = "./client/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "blog-db"
+database_id = "51d64d29-a518-457a-95b1-fff58c072bed"
+

@@ -1,0 +1,29 @@
+{
+  "name": "microblog",
+  "version": "1.0.0",
+  "description": "Serverless Microblogging Platform using Cloudflare Workers, Hono, React, and D1",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "deploy": "npm run build && wrangler deploy",
+    "db:create": "wrangler d1 create blog-db",
+    "db:migrate": "wrangler d1 execute blog-db --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute blog-db --file=./schema.sql --local",
+    "preview": "npm run build && wrangler dev"
+  },
+  "dependencies": {
+    "hono": "^4.6.12",
+    "papaparse": "^5.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "@types/papaparse": "^5.3.15",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.54.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

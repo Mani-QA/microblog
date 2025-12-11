@@ -1,0 +1,6 @@
+slug,title,content,tags,category,image_url
+hello-world,Hello World,Welcome to our microblogging platform! This is the first post to demonstrate the capabilities of our serverless architecture.,welcome,Getting Started,
+getting-started-cloudflare,Getting Started with Cloudflare Workers,"Cloudflare Workers allow you to run JavaScript at the edge. Combined with D1 database and Hono framework, you can build powerful serverless applications.",cloudflare,Technology,
+react-vite-setup,React + Vite: A Modern Frontend Stack,"React with Vite provides an incredibly fast development experience. Hot module replacement, TypeScript support, and optimized builds make it a joy to work with.",react,Technology,
+understanding-d1,Understanding Cloudflare D1 Database,"D1 is Cloudflare's serverless SQL database. It's built on SQLite and provides features like read replicas for improved performance at scale.",database,Technology,
+csv-import-export,CSV Import and Export Features,Our platform supports bulk operations through CSV files. You can import thousands of posts at once and export your entire blog for backup.,features,Features,
