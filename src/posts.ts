@@ -232,7 +232,7 @@ export async function listPosts(env: Env, query: ListQuery): Promise<{ posts: Po
     params.push(query.category);
   }
   if (query.tag) {
-    conditions.push("(',' || COALESCE(tags, '') || ',') LIKE ('%,' || ? || ',%')");
+    conditions.push("(',' || REPLACE(REPLACE(COALESCE(tags, ''), ', ', ','), ' ,', ',') || ',') LIKE ('%,' || ? || ',%')");
     params.push(query.tag);
   }
   const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
