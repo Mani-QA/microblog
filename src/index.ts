@@ -1,234 +1,149 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { streamText } from 'hono/streaming';
-import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import Papa from 'papaparse';
+import { login, logout, readAccess, requireWriter, verify } from './auth';
+import { robotsTxt, rssXml, sitemapXml } from './feeds';
+import { HttpError, jsonError, siteUrl } from './http';
+import { serveMedia, storeFile, storeImage, decodeBase64Image } from './media';
+import {
+  createPost,
+  deletePost,
+  getPostBySlug,
+  isDraft,
+  listPosts,
+  listPublicForFeed,
+  serializePost,
+  updatePost,
+} from './posts';
+import { renderFilter, renderHome, renderNotFound, renderPost } from './render';
 
-// Type definitions
-interface Env {
-  DB: D1Database;
-  ASSETS: Fetcher;
-  ADMIN_PASSWORD: string; // Secret - set via wrangler secret or .dev.vars
-}
-
-interface Post {
-  id?: number;
-  slug: string;
-  title: string;
-  content: string;
-  tags?: string;
-  category?: string;
-  image_url?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface PostCSV {
-  slug: string;
-  title: string;
-  content: string;
+interface CsvPost {
+  slug?: string;
+  title?: string;
+  content?: string;
   tags?: string;
   category?: string;
   image_url?: string;
 }
 
-// ============================================
-// Authentication Configuration
-// ============================================
-
-// Generate session token
-async function generateSessionToken(): Promise<string> {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-// In-memory session store (for production, use KV or D1)
-const activeSessions = new Map<string, { expires: number }>();
-
-// Clean expired sessions
-function cleanExpiredSessions() {
-  const now = Date.now();
-  for (const [token, session] of activeSessions) {
-    if (session.expires < now) {
-      activeSessions.delete(token);
-    }
-  }
-}
+type AppContext = Context<{ Bindings: Env }>;
 
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS middleware for API routes
-app.use('/api/*', cors());
-
-// ============================================
-// Admin Authentication Endpoints
-// ============================================
-
-// POST /api/admin/login - Authenticate admin
-app.post('/api/admin/login', async (c) => {
-  try {
-    const body = await c.req.json<{ password: string }>();
-    const password = body?.password;
-    
-    if (!password) {
-      return c.json({ error: 'Password is required' }, 400);
+app.use('*', async (c, next) => {
+  if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+    const url = new URL(c.req.url);
+    if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
+      url.pathname = url.pathname.replace(/\/+$/, '');
+      return c.redirect(url.toString(), 301);
     }
-
-    // Get admin password from environment variable (secret)
-    const adminPassword = c.env.ADMIN_PASSWORD;
-    
-    if (!adminPassword) {
-      console.error('ADMIN_PASSWORD secret not configured');
-      return c.json({ error: 'Server configuration error' }, 500);
-    }
-
-    // Compare with environment variable
-    const isValid = password === adminPassword;
-    
-    if (!isValid) {
-      // Add delay to prevent timing attacks
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return c.json({ error: 'Invalid password' }, 401);
-    }
-
-    // Clean expired sessions
-    cleanExpiredSessions();
-
-    // Generate session token
-    const sessionToken = await generateSessionToken();
-    const expires = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
-    
-    // Store session
-    activeSessions.set(sessionToken, { expires });
-
-    // Set HTTP-only cookie (auto-detect HTTPS for secure flag)
-    const isSecure = new URL(c.req.url).protocol === 'https:';
-    setCookie(c, 'admin_session', sessionToken, {
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: 'Lax',
-      path: '/',
-      maxAge: 24 * 60 * 60, // 24 hours
-    });
-
-    return c.json({ success: true, message: 'Login successful' });
-  } catch (error) {
-    console.error('Login error:', error);
-    return c.json({ error: 'Login failed' }, 500);
   }
-});
-
-// POST /api/admin/logout - Logout admin
-app.post('/api/admin/logout', (c) => {
-  const sessionToken = getCookie(c, 'admin_session');
-  
-  if (sessionToken) {
-    activeSessions.delete(sessionToken);
-  }
-  
-  deleteCookie(c, 'admin_session', { path: '/' });
-  
-  return c.json({ success: true, message: 'Logged out' });
-});
-
-// GET /api/admin/verify - Verify session
-app.get('/api/admin/verify', (c) => {
-  const sessionToken = getCookie(c, 'admin_session');
-  
-  if (!sessionToken) {
-    return c.json({ authenticated: false }, 401);
-  }
-
-  const session = activeSessions.get(sessionToken);
-  
-  if (!session || session.expires < Date.now()) {
-    activeSessions.delete(sessionToken);
-    deleteCookie(c, 'admin_session', { path: '/' });
-    return c.json({ authenticated: false }, 401);
-  }
-
-  return c.json({ authenticated: true });
-});
-
-// Middleware to protect admin routes
-const requireAuth = async (c: any, next: any) => {
-  const sessionToken = getCookie(c, 'admin_session');
-  
-  if (!sessionToken) {
-    return c.json({ error: 'Authentication required' }, 401);
-  }
-
-  const session = activeSessions.get(sessionToken);
-  
-  if (!session || session.expires < Date.now()) {
-    activeSessions.delete(sessionToken);
-    return c.json({ error: 'Session expired' }, 401);
-  }
-
   await next();
-};
+});
 
-// ============================================
-// Endpoint 1: Bulk Import (POST /api/posts/import) - Protected
-// ============================================
-app.post('/api/posts/import', requireAuth, async (c) => {
+app.use('/api/*', cors());
+app.use('/api/*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Robots-Tag', 'noindex');
+  c.header('Cache-Control', 'no-store');
+});
+
+app.onError((err, c) => {
+  console.error(JSON.stringify({
+    message: 'request failed',
+    path: c.req.path,
+    error: err instanceof Error ? err.message : String(err),
+  }));
+  if (c.req.path.startsWith('/api/') || c.req.path.startsWith('/media/')) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+  return c.text('Something went wrong.', 500);
+});
+
+function positiveInt(value: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
+async function readBody(c: AppContext): Promise<{ fields: Record<string, unknown>; file: File | null }> {
+  const length = Number(c.req.header('content-length') || 0);
+  if (length > 8 * 1024 * 1024) throw new HttpError('Request body is too large', 413);
+  const type = c.req.header('content-type') || '';
+  if (type.includes('multipart/form-data')) {
+    const form = await c.req.parseBody();
+    const fields: Record<string, unknown> = {};
+    let file: File | null = null;
+    for (const [key, value] of Object.entries(form)) {
+      if (value instanceof File) {
+        if (key === 'cover_image' || key === 'file') file = value;
+      } else {
+        fields[key] = value;
+      }
+    }
+    return { fields, file };
+  }
+  if (type.includes('application/json') || type === '') {
+    let json: unknown;
+    try {
+      json = await c.req.json();
+    } catch {
+      throw new HttpError('Request body must be a JSON object or multipart form', 400);
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      throw new HttpError('Request body must be a JSON object', 400);
+    }
+    return { fields: json as Record<string, unknown>, file: null };
+  }
+  throw new HttpError('Content-Type must be application/json or multipart/form-data', 415);
+}
+
+app.post('/api/admin/login', (c) => login(c));
+app.post('/api/admin/logout', (c) => logout(c));
+app.get('/api/admin/verify', (c) => verify(c));
+
+app.post('/api/posts/import', async (c) => {
+  const denied = await requireWriter(c);
+  if (denied) return denied;
   try {
     const formData = await c.req.formData();
-    const file = formData.get('file') as File;
+    const file = formData.get('file');
+    if (!(file instanceof File)) return c.json({ error: 'No CSV file provided' }, 400);
 
-    if (!file) {
-      return c.json({ error: 'No CSV file provided' }, 400);
-    }
-
-    const csvText = await file.text();
-
-    // Parse CSV using papaparse
-    const parseResult = Papa.parse<PostCSV>(csvText, {
+    const parsed = Papa.parse<CsvPost>(await file.text(), {
       header: true,
       skipEmptyLines: true,
       transformHeader: (header) => header.trim().toLowerCase(),
     });
-
-    if (parseResult.errors.length > 0) {
-      return c.json({ 
-        error: 'CSV parsing errors', 
-        details: parseResult.errors 
-      }, 400);
+    if (parsed.errors.length > 0) {
+      return c.json({ error: 'CSV parsing errors', details: parsed.errors }, 400);
     }
+    if (parsed.data.length === 0) return c.json({ error: 'No valid posts found in CSV' }, 400);
 
-    const posts = parseResult.data;
-
-    if (posts.length === 0) {
-      return c.json({ error: 'No valid posts found in CSV' }, 400);
-    }
-
-    // Chunk size for D1 batch operations (respecting D1 limits)
-    const CHUNK_SIZE = 50;
-    let imported = 0;
-    let updated = 0;
-
-    // Process in chunks
-    for (let i = 0; i < posts.length; i += CHUNK_SIZE) {
-      const chunk = posts.slice(i, i + CHUNK_SIZE);
+    let processed = 0;
+    const chunkSize = 50;
+    for (let i = 0; i < parsed.data.length; i += chunkSize) {
       const statements: D1PreparedStatement[] = [];
-
-      for (const post of chunk) {
-        // Validate required fields
-        if (!post.slug || !post.title || !post.content) {
-          continue;
-        }
-
-        // Upsert: Insert or update on slug conflict
-        const stmt = c.env.DB.prepare(`
-          INSERT INTO posts (slug, title, content, tags, category, image_url, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      for (const post of parsed.data.slice(i, i + chunkSize)) {
+        if (!post.slug?.trim() || !post.title?.trim() || !post.content) continue;
+        const image = post.image_url?.trim() || null;
+        statements.push(c.env.DB.prepare(`
+          INSERT INTO posts (
+            slug, title, content, tags, category, image_url, cover_image_url,
+            author, draft, published_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Manivannan Gajendran', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT(slug) DO UPDATE SET
             title = excluded.title,
             content = excluded.content,
             tags = excluded.tags,
             category = excluded.category,
             image_url = excluded.image_url,
+            cover_image_url = CASE
+              WHEN excluded.image_url IS NOT NULL AND excluded.image_url != '' THEN excluded.image_url
+              ELSE posts.cover_image_url
+            END,
             updated_at = CURRENT_TIMESTAMP
         `).bind(
           post.slug.trim(),
@@ -236,153 +151,88 @@ app.post('/api/posts/import', requireAuth, async (c) => {
           post.content,
           post.tags || null,
           post.category || null,
-          post.image_url || null
-        );
-
-        statements.push(stmt);
+          image,
+          image,
+        ));
       }
-
-      if (statements.length > 0) {
-        const results = await c.env.DB.batch(statements);
-        
-        // Count inserts vs updates based on changes
-        for (const result of results) {
-          if (result.meta.changes > 0) {
-            // Check if it was an insert or update by checking rows_written
-            if (result.meta.last_row_id && result.meta.last_row_id > 0) {
-              imported++;
-            } else {
-              updated++;
-            }
-          }
-        }
+      if (statements.length) {
+        await c.env.DB.batch(statements);
+        processed += statements.length;
       }
     }
 
     return c.json({
       success: true,
-      message: `Import completed`,
-      stats: {
-        total: posts.length,
-        processed: imported + updated,
-      }
+      message: 'Import completed',
+      stats: { total: parsed.data.length, processed },
     });
   } catch (error) {
-    console.error('Import error:', error);
-    return c.json({ 
-      error: 'Import failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    console.error(JSON.stringify({
+      message: 'import failed',
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return c.json({ error: 'Import failed' }, 500);
   }
 });
 
-// ============================================
-// Endpoint 2: Bulk Export (GET /api/posts/export)
-// ============================================
 app.get('/api/posts/export', async (c) => {
+  const access = await readAccess(c);
+  if (access instanceof Response) return access;
   try {
-    // Use raw() for better performance with streaming
+    const where = access === 'privileged' ? '' : ' WHERE draft = 0';
     const result = await c.env.DB.prepare(`
       SELECT slug, title, content, tags, category, image_url, created_at, updated_at
-      FROM posts
-      ORDER BY created_at DESC
+      FROM posts${where}
+      ORDER BY datetime(COALESCE(published_at, created_at)) DESC
     `).raw({ columnNames: true });
 
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', 'attachment; filename="posts-export.csv"');
     if (!result || result.length === 0) {
-      c.header('Content-Type', 'text/csv');
-      c.header('Content-Disposition', 'attachment; filename="posts-export.csv"');
       return c.body('slug,title,content,tags,category,image_url,created_at,updated_at\n');
     }
-
-    // Extract column names from first row
     const columns = result[0] as string[];
     const rows = result.slice(1);
-
-    // Set response headers for CSV download
-    c.header('Content-Type', 'text/csv');
-    c.header('Content-Disposition', 'attachment; filename="posts-export.csv"');
-
-    // Stream CSV data
     return streamText(c, async (stream) => {
-      // Write header row
       await stream.writeln(columns.join(','));
-
-      // Stream each row
       for (const row of rows) {
-        const csvRow = (row as (string | number | null)[]).map(value => {
+        const csvRow = (row as (string | number | null)[]).map((value) => {
           if (value === null || value === undefined) return '';
           const stringValue = String(value);
-          // Escape quotes and wrap in quotes if contains comma, quote, or newline
-          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-            return `"${stringValue.replace(/"/g, '""')}"`;
-          }
+          if (/[",\n]/.test(stringValue)) return `"${stringValue.replace(/"/g, '""')}"`;
           return stringValue;
         }).join(',');
-        
         await stream.writeln(csvRow);
       }
     });
   } catch (error) {
-    console.error('Export error:', error);
-    return c.json({ 
-      error: 'Export failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    console.error(JSON.stringify({
+      message: 'export failed',
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return c.json({ error: 'Export failed' }, 500);
   }
 });
 
-// ============================================
-// Endpoint 3: CRUD Operations
-// ============================================
-
-// GET /api/posts - List posts (paginated, using read replicas)
 app.get('/api/posts', async (c) => {
+  const access = await readAccess(c);
+  if (access instanceof Response) return access;
   try {
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = Math.min(parseInt(c.req.query('limit') || '10'), 100);
-    const category = c.req.query('category');
-    const tag = c.req.query('tag');
-    const offset = (page - 1) * limit;
-
-    let query = 'SELECT * FROM posts';
-    let countQuery = 'SELECT COUNT(*) as total FROM posts';
-    const params: (string | number)[] = [];
-    const conditions: string[] = [];
-
-    if (category) {
-      conditions.push('category = ?');
-      params.push(category);
-    }
-
-    if (tag) {
-      // Search for tag in comma-separated tags field
-      conditions.push("(',' || tags || ',' LIKE '%,' || ? || ',%')");
-      params.push(tag);
-    }
-
-    if (conditions.length > 0) {
-      const whereClause = ' WHERE ' + conditions.join(' AND ');
-      query += whereClause;
-      countQuery += whereClause;
-    }
-
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-
-    // Get total count
-    const countResult = await c.env.DB.prepare(countQuery)
-      .bind(...params)
-      .first<{ total: number }>();
-
-    // Get paginated posts (hitting read replicas)
-    const posts = await c.env.DB.prepare(query)
-      .bind(...params, limit, offset)
-      .all<Post>();
-
-    const total = countResult?.total || 0;
+    const page = positiveInt(c.req.query('page'), 1, 100000);
+    const limit = positiveInt(c.req.query('limit'), 10, 100);
+    const category = c.req.query('category') || undefined;
+    const tag = c.req.query('tag') || undefined;
+    const { posts, total } = await listPosts(c.env, {
+      page,
+      limit,
+      category,
+      tag,
+      includeDrafts: access === 'privileged',
+    });
     const totalPages = Math.ceil(total / limit);
-
+    const base = siteUrl(c.env);
     return c.json({
-      posts: posts.results,
+      posts: posts.map((post) => serializePost(post, base)),
       pagination: {
         page,
         limit,
@@ -390,256 +240,200 @@ app.get('/api/posts', async (c) => {
         totalPages,
         hasNext: page < totalPages,
         hasPrev: page > 1,
-      }
+      },
     });
   } catch (error) {
-    console.error('List posts error:', error);
-    return c.json({ 
-      error: 'Failed to fetch posts', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    return jsonError(error);
   }
 });
 
-// GET /api/categories - List all unique categories
 app.get('/api/categories', async (c) => {
-  try {
-    const result = await c.env.DB.prepare(`
-      SELECT category, COUNT(*) as count 
-      FROM posts 
-      WHERE category IS NOT NULL AND category != ''
-      GROUP BY category 
-      ORDER BY count DESC
-    `).all<{ category: string; count: number }>();
-
-    return c.json({ categories: result.results });
-  } catch (error) {
-    console.error('List categories error:', error);
-    return c.json({ error: 'Failed to fetch categories' }, 500);
-  }
+  const access = await readAccess(c);
+  if (access instanceof Response) return access;
+  const where = access === 'privileged' ? '' : ' AND draft = 0';
+  const result = await c.env.DB.prepare(`
+    SELECT category, COUNT(*) AS count
+    FROM posts
+    WHERE category IS NOT NULL AND category != ''${where}
+    GROUP BY category
+    ORDER BY count DESC
+  `).all<{ category: string; count: number }>();
+  return c.json({ categories: result.results });
 });
 
-// GET /api/tags - List all unique tags with counts
 app.get('/api/tags', async (c) => {
-  try {
-    // Get all posts with tags
-    const posts = await c.env.DB.prepare(`
-      SELECT tags FROM posts WHERE tags IS NOT NULL AND tags != ''
-    `).all<{ tags: string }>();
-
-    // Parse and count tags
-    const tagCounts = new Map<string, number>();
-    
-    for (const post of posts.results) {
-      const tags = post.tags.split(',').map(t => t.trim()).filter(Boolean);
-      for (const tag of tags) {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      }
+  const access = await readAccess(c);
+  if (access instanceof Response) return access;
+  const where = access === 'privileged' ? '' : ' AND draft = 0';
+  const posts = await c.env.DB.prepare(`
+    SELECT tags FROM posts WHERE tags IS NOT NULL AND tags != ''${where}
+  `).all<{ tags: string }>();
+  const counts = new Map<string, number>();
+  for (const post of posts.results) {
+    for (const tag of post.tags.split(',').map((item) => item.trim()).filter(Boolean)) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
     }
-
-    // Convert to sorted array
-    const tags = Array.from(tagCounts.entries())
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count);
-
-    return c.json({ tags });
-  } catch (error) {
-    console.error('List tags error:', error);
-    return c.json({ error: 'Failed to fetch tags' }, 500);
   }
+  const tags = [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count);
+  return c.json({ tags });
 });
 
-// GET /api/posts/:slug - Get single post
 app.get('/api/posts/:slug', async (c) => {
+  const access = await readAccess(c);
+  if (access instanceof Response) return access;
+  const post = await getPostBySlug(c.env, c.req.param('slug'));
+  if (!post || (isDraft(post) && access !== 'privileged')) {
+    return c.json({ error: 'Post not found' }, 404);
+  }
+  return c.json(serializePost(post, siteUrl(c.env)));
+});
+
+app.post('/api/posts', async (c) => {
+  const denied = await requireWriter(c);
+  if (denied) return denied;
   try {
-    const slug = c.req.param('slug');
-
-    const post = await c.env.DB.prepare(`
-      SELECT * FROM posts WHERE slug = ?
-    `).bind(slug).first<Post>();
-
-    if (!post) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
-
-    return c.json(post);
+    const { fields, file } = await readBody(c);
+    const post = await createPost(c.env, fields, file);
+    return c.json(serializePost(post, siteUrl(c.env)), 201);
   } catch (error) {
-    console.error('Get post error:', error);
-    return c.json({ 
-      error: 'Failed to fetch post', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    return jsonError(error);
   }
 });
 
-// POST /api/posts - Create a post (Protected)
-app.post('/api/posts', requireAuth, async (c) => {
-  try {
-    const body = await c.req.json<Omit<Post, 'id' | 'created_at' | 'updated_at'>>();
-
-    // Validate required fields
-    if (!body.slug || !body.title || !body.content) {
-      return c.json({ 
-        error: 'Missing required fields: slug, title, content are required' 
-      }, 400);
-    }
-
-    // Check if slug already exists
-    const existing = await c.env.DB.prepare(`
-      SELECT id FROM posts WHERE slug = ?
-    `).bind(body.slug).first();
-
-    if (existing) {
-      return c.json({ error: 'A post with this slug already exists' }, 409);
-    }
-
-    const result = await c.env.DB.prepare(`
-      INSERT INTO posts (slug, title, content, tags, category, image_url)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(
-      body.slug,
-      body.title,
-      body.content,
-      body.tags || null,
-      body.category || null,
-      body.image_url || null
-    ).run();
-
-    // Fetch the created post
-    const newPost = await c.env.DB.prepare(`
-      SELECT * FROM posts WHERE id = ?
-    `).bind(result.meta.last_row_id).first<Post>();
-
-    return c.json(newPost, 201);
-  } catch (error) {
-    console.error('Create post error:', error);
-    return c.json({ 
-      error: 'Failed to create post', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
-  }
-});
-
-// PUT /api/posts/:slug - Update a post (Protected)
-app.put('/api/posts/:slug', requireAuth, async (c) => {
+async function updateHandler(c: AppContext): Promise<Response> {
+  const denied = await requireWriter(c);
+  if (denied) return denied;
   try {
     const slug = c.req.param('slug');
-    const body = await c.req.json<Partial<Omit<Post, 'id' | 'created_at' | 'updated_at'>>>();
-
-    // Check if post exists
-    const existing = await c.env.DB.prepare(`
-      SELECT id FROM posts WHERE slug = ?
-    `).bind(slug).first<{ id: number }>();
-
-    if (!existing) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
-
-    // Build dynamic update query
-    const updates: string[] = [];
-    const values: (string | null)[] = [];
-
-    if (body.title !== undefined) {
-      updates.push('title = ?');
-      values.push(body.title);
-    }
-    if (body.content !== undefined) {
-      updates.push('content = ?');
-      values.push(body.content);
-    }
-    if (body.tags !== undefined) {
-      updates.push('tags = ?');
-      values.push(body.tags || null);
-    }
-    if (body.category !== undefined) {
-      updates.push('category = ?');
-      values.push(body.category || null);
-    }
-    if (body.image_url !== undefined) {
-      updates.push('image_url = ?');
-      values.push(body.image_url || null);
-    }
-    if (body.slug !== undefined && body.slug !== slug) {
-      // Check if new slug is available
-      const slugExists = await c.env.DB.prepare(`
-        SELECT id FROM posts WHERE slug = ? AND id != ?
-      `).bind(body.slug, existing.id).first();
-
-      if (slugExists) {
-        return c.json({ error: 'A post with this slug already exists' }, 409);
-      }
-      updates.push('slug = ?');
-      values.push(body.slug);
-    }
-
-    if (updates.length === 0) {
-      return c.json({ error: 'No fields to update' }, 400);
-    }
-
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(slug);
-
-    await c.env.DB.prepare(`
-      UPDATE posts SET ${updates.join(', ')} WHERE slug = ?
-    `).bind(...values).run();
-
-    // Fetch updated post (use new slug if changed)
-    const finalSlug = body.slug || slug;
-    const updatedPost = await c.env.DB.prepare(`
-      SELECT * FROM posts WHERE slug = ?
-    `).bind(finalSlug).first<Post>();
-
-    return c.json(updatedPost);
+    if (!slug) return c.json({ error: 'Not found' }, 404);
+    const { fields, file } = await readBody(c);
+    const post = await updatePost(c.env, slug, fields, file);
+    return c.json(serializePost(post, siteUrl(c.env)));
   } catch (error) {
-    console.error('Update post error:', error);
-    return c.json({ 
-      error: 'Failed to update post', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    return jsonError(error);
   }
-});
+}
 
-// DELETE /api/posts/:slug - Delete a post (Protected)
-app.delete('/api/posts/:slug', requireAuth, async (c) => {
+app.put('/api/posts/:slug', (c) => updateHandler(c));
+app.patch('/api/posts/:slug', (c) => updateHandler(c));
+
+app.delete('/api/posts/:slug', async (c) => {
+  const denied = await requireWriter(c);
+  if (denied) return denied;
   try {
-    const slug = c.req.param('slug');
-
-    const result = await c.env.DB.prepare(`
-      DELETE FROM posts WHERE slug = ?
-    `).bind(slug).run();
-
-    if (result.meta.changes === 0) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
-
+    await deletePost(c.env, c.req.param('slug'));
     return c.json({ success: true, message: 'Post deleted successfully' });
   } catch (error) {
-    console.error('Delete post error:', error);
-    return c.json({ 
-      error: 'Failed to delete post', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, 500);
+    return jsonError(error);
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (c) => {
-  return c.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString() 
+app.post('/api/media', async (c) => {
+  const denied = await requireWriter(c);
+  if (denied) return denied;
+  try {
+    const { fields, file } = await readBody(c);
+    const stored = file && file.size > 0
+      ? await storeFile(c.env, file)
+      : typeof fields.cover_image_base64 === 'string'
+        ? await storeImage(c.env, decodeBase64Image(fields.cover_image_base64))
+        : null;
+    if (!stored) throw new HttpError('Send a cover_image file or cover_image_base64', 400);
+    const base = siteUrl(c.env);
+    return c.json({
+      key: stored.key,
+      url: `${base}${stored.path}`,
+      content_type: stored.contentType,
+    }, 201);
+  } catch (error) {
+    return jsonError(error);
+  }
+});
+
+app.get('/api/health', (c) => c.json({ status: 'healthy', timestamp: new Date().toISOString() }));
+
+app.get('/sitemap.xml', async (c) => {
+  const posts = await listPublicForFeed(c.env);
+  return c.body(sitemapXml(c.env, posts), 200, {
+    'Content-Type': 'application/xml; charset=utf-8',
+    'Cache-Control': 'public, max-age=300',
   });
 });
 
-// SPA catch-all: serve index.html for client-side routes
-app.get('*', async (c) => {
-  // Skip API routes (already handled above)
-  if (c.req.path.startsWith('/api/')) {
+app.get('/robots.txt', (c) => c.body(robotsTxt(c.env), 200, {
+  'Content-Type': 'text/plain; charset=utf-8',
+  'Cache-Control': 'public, max-age=300',
+}));
+
+app.get('/rss.xml', async (c) => {
+  const posts = await listPublicForFeed(c.env, 50);
+  return c.body(rssXml(c.env, posts), 200, {
+    'Content-Type': 'application/rss+xml; charset=utf-8',
+    'Cache-Control': 'public, max-age=300',
+  });
+});
+
+app.get('/media/*', (c) => serveMedia(c.env, decodeURIComponent(c.req.path.slice('/media/'.length))));
+
+function redirectToBlog(url: string, slug: string): Response {
+  return Response.redirect(new URL(`/blog/${encodeURIComponent(slug)}`, url).toString(), 301);
+}
+
+app.get('/posts/:slug', (c) => redirectToBlog(c.req.url, c.req.param('slug')));
+app.get('/post/:slug', (c) => redirectToBlog(c.req.url, c.req.param('slug')));
+
+app.get('/', async (c) => {
+  const page = positiveInt(c.req.query('page'), 1, 100000);
+  const limit = 20;
+  const { posts, total } = await listPosts(c.env, { page, limit, includeDrafts: false });
+  return renderHome(c.env, posts, page, Math.max(1, Math.ceil(total / limit)));
+});
+
+app.get('/blog/:slug', async (c) => {
+  const post = await getPostBySlug(c.env, c.req.param('slug'));
+  if (!post || isDraft(post)) return renderNotFound(c.env);
+  return renderPost(c.env, post);
+});
+
+app.get('/category/:name', async (c) => {
+  const name = c.req.param('name');
+  const page = positiveInt(c.req.query('page'), 1, 100000);
+  const limit = 20;
+  const { posts, total } = await listPosts(c.env, { page, limit, category: name, includeDrafts: false });
+  return renderFilter(c.env, 'Category', name, posts, page, Math.max(1, Math.ceil(total / limit)));
+});
+
+app.get('/tags/:name', async (c) => {
+  const name = c.req.param('name');
+  const page = positiveInt(c.req.query('page'), 1, 100000);
+  const limit = 20;
+  const { posts, total } = await listPosts(c.env, { page, limit, tag: name, includeDrafts: false });
+  return renderFilter(c.env, 'Tag', name, posts, page, Math.max(1, Math.ceil(total / limit)));
+});
+
+async function adminShell(c: { req: { url: string }; env: Env }): Promise<Response> {
+  const url = new URL(c.req.url);
+  url.pathname = '/index.html';
+  return c.env.ASSETS.fetch(new Request(url.toString(), { method: 'GET' }));
+}
+
+app.get('/adminauthor', (c) => adminShell(c));
+app.get('/adminauthor/*', (c) => adminShell(c));
+
+app.all('*', async (c) => {
+  if (c.req.path.startsWith('/api/')) return c.json({ error: 'Not found' }, 404);
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
     return c.json({ error: 'Not found' }, 404);
   }
-  
-  // Serve index.html for SPA routing
-  return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url)));
+  const asset = await c.env.ASSETS.fetch(c.req.raw);
+  const contentType = asset.headers.get('content-type') || '';
+  const path = c.req.path;
+  const wantsAsset = path.includes('.') || path.startsWith('/assets/');
+  if (wantsAsset && contentType.includes('text/html')) return renderNotFound(c.env);
+  if (!wantsAsset) return renderNotFound(c.env);
+  return asset;
 });
 
 export default app;
-

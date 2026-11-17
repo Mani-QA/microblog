@@ -1,305 +1,85 @@
-# Microblog Platform Architecture
+# Architecture
 
-## Overview
-
-This document describes the architecture of the Microblog platform, a serverless microblogging application built using the **Workers with Assets** deployment model on Cloudflare.
-
-## System Architecture
+blog.manig.dev is one Cloudflare Worker, `microblog`. Hono routes API calls, server-rendered HTML, feeds, and media. The admin UI is a Vite/React bundle served with Workers Assets. Posts live in D1 (`blog-db`). Cover images live in R2 (`microblog-media`, binding `MEDIA`).
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Cloudflare Edge Network                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│   ┌───────────────────┐    ┌────────────────────────────────────┐  │
-│   │   Static Assets   │    │         Cloudflare Worker          │  │
-│   │   (client/dist)   │    │         (Hono API)                 │  │
-│   │                   │    │                                    │  │
-│   │  - HTML/CSS/JS    │    │  ┌─────────────────────────────┐  │  │
-│   │  - Images         │    │  │      API Routes             │  │  │
-│   │  - Fonts          │    │  │                             │  │  │
-│   └───────────────────┘    │  │  POST /api/posts/import     │  │  │
-│           │                │  │  GET  /api/posts/export     │  │  │
-│           │                │  │  GET  /api/posts            │  │  │
-│           ▼                │  │  GET  /api/posts/:slug      │  │  │
-│   ┌───────────────────┐    │  │  POST /api/posts            │  │  │
-│   │   ASSETS Binding  │    │  │  PUT  /api/posts/:slug      │  │  │
-│   │                   │    │  │  DELETE /api/posts/:slug    │  │  │
-│   │   SPA Fallback    │    │  └─────────────────────────────┘  │  │
-│   │   (index.html)    │    │              │                    │  │
-│   └───────────────────┘    │              │                    │  │
-│                            │              ▼                    │  │
-│                            │  ┌─────────────────────────────┐  │  │
-│                            │  │       D1 Database           │  │  │
-│                            │  │       (blog-db)             │  │  │
-│                            │  │                             │  │  │
-│                            │  │   ┌─────────────────────┐   │  │  │
-│                            │  │   │   posts table       │   │  │  │
-│                            │  │   │   - id              │   │  │  │
-│                            │  │   │   - slug (unique)   │   │  │  │
-│                            │  │   │   - title           │   │  │  │
-│                            │  │   │   - content         │   │  │  │
-│                            │  │   │   - tags            │   │  │  │
-│                            │  │   │   - category        │   │  │  │
-│                            │  │   │   - image_url       │   │  │  │
-│                            │  │   │   - created_at      │   │  │  │
-│                            │  │   │   - updated_at      │   │  │  │
-│                            │  │   └─────────────────────┘   │  │  │
-│                            │  │                             │  │  │
-│                            │  │   Read Replicas (5x)        │  │  │
-│                            │  └─────────────────────────────┘  │  │
-│                            └────────────────────────────────────┘  │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## Deployment Model: Workers with Assets
-
-This project uses the **Workers with Assets** deployment model, which provides:
-
-1. **Unified Deployment** - Frontend and backend deploy together as a single Worker
-2. **SPA Support** - Automatic fallback to `index.html` for client-side routing
-3. **Edge Caching** - Static assets are cached at Cloudflare's edge
-4. **Zero Cold Starts** - Workers start instantly worldwide
-
-### Configuration (wrangler.toml)
-
-```toml
-[assets]
-directory = "./client/dist"     # Static files location
-binding = "ASSETS"               # Access static files programmatically
-not_found_handling = "single-page-application"  # SPA routing support
-```
-
-## Data Flow
-
-### 1. Static Asset Request
-
-```
-Client Request → Edge Network → Asset Check → Serve Static File
-                     │
-                     └── If not found → SPA fallback (index.html)
-```
-
-### 2. API Request
-
-```
-Client Request → Edge Network → Worker → Hono Router → D1 Database → Response
-                                              │
-                                              └── Read Replicas for GET requests
-```
-
-### 3. CSV Import Flow
-
-```
-CSV File Upload → Worker → PapaParse → Chunked Processing (50 records)
-                              │
-                              └── Batch Upsert to D1 (ON CONFLICT UPDATE)
-```
-
-### 4. CSV Export Flow
-
-```
-Export Request → Worker → D1 Query (.raw()) → Stream Response
-                              │
-                              └── streamText() for efficient memory usage
-```
-
-## Database Design
-
-### Posts Table
-
-| Column     | Type     | Constraints                | Description                        |
-| ---------- | -------- | -------------------------- | ---------------------------------- |
-| id         | INTEGER  | PRIMARY KEY, AUTOINCREMENT | Unique identifier                  |
-| slug       | TEXT     | UNIQUE, NOT NULL           | URL-friendly identifier for upsert |
-| title      | TEXT     | NOT NULL                   | Post title                         |
-| content    | TEXT     | NOT NULL                   | Post body content                  |
-| tags       | TEXT     | NULLABLE                   | Comma-separated tags               |
-| category   | TEXT     | NULLABLE                   | Post category                      |
-| image_url  | TEXT     | NULLABLE                   | Featured image URL                 |
-| created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP  | Creation time                      |
-| updated_at | DATETIME | DEFAULT CURRENT_TIMESTAMP  | Last modified time                 |
-
-### Indexes
-
-| Index                | Column(s)       | Purpose                              |
-| -------------------- | --------------- | ------------------------------------ |
-| idx_posts_slug       | slug            | Fast slug lookups, upsert operations |
-| idx_posts_category   | category        | Category filtering                   |
-| idx_posts_created_at | created_at DESC | Pagination, sorting                  |
-
-### Upsert Strategy
-
-The import endpoint uses SQLite's `ON CONFLICT` clause for efficient upserts:
-
-```sql
-INSERT INTO posts (slug, title, content, ...)
-VALUES (?, ?, ?, ...)
-ON CONFLICT(slug) DO UPDATE SET
-  title = excluded.title,
-  content = excluded.content,
-  ...
-  updated_at = CURRENT_TIMESTAMP
-```
-
-## API Design
-
-### RESTful Endpoints
-
-| Method | Path             | Description          | D1 Operation             |
-| ------ | ---------------- | -------------------- | ------------------------ |
-| GET    | /api/posts       | List paginated posts | SELECT with LIMIT/OFFSET |
-| GET    | /api/posts/:slug | Get single post      | SELECT WHERE slug        |
-| POST   | /api/posts       | Create post          | INSERT                   |
-| PUT    | /api/posts/:slug | Update post          | UPDATE WHERE slug        |
-| DELETE | /api/posts/:slug | Delete post          | DELETE WHERE slug        |
-
-### Bulk Endpoints
-
-| Method | Path              | Description          | Special Features                          |
-| ------ | ----------------- | -------------------- | ----------------------------------------- |
-| POST   | /api/posts/import | CSV bulk import      | PapaParse, Batch upsert, 50-record chunks |
-| GET    | /api/posts/export | CSV streaming export | streamText(), raw() queries               |
-
-### Pagination Response Format
-
-```json
-{
-  "posts": [...],
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 42,
-    "totalPages": 5,
-    "hasNext": true,
-    "hasPrev": false
-  }
-}
-```
-
-## Performance Optimizations
-
-### D1 Read Replicas
-
-Read replicas are enabled for improved read performance:
-
-```toml
-[d1_databases.migrations]
-read_replication = true
-replica_count = 5
-```
-
-Benefits:
-
-- Reduced latency for read-heavy workloads
-- Geographic distribution of read capacity
-- Primary database handles writes
-
-### Streaming Export
-
-CSV export uses Hono's `streamText()` for memory-efficient streaming:
-
-```typescript
-return streamText(c, async (stream) => {
-  await stream.writeln(headers);
-  for (const row of results) {
-    await stream.writeln(formatRow(row));
-  }
-});
-```
-
-### Batch Processing
-
-CSV imports process records in chunks of 50 to stay within D1 limits:
-
-```typescript
-const CHUNK_SIZE = 50;
-for (let i = 0; i < posts.length; i += CHUNK_SIZE) {
-  const chunk = posts.slice(i, i + CHUNK_SIZE);
-  await db.batch(statements);
-}
-```
-
-## Frontend Architecture
-
-### Component Structure
-
-```
-client/src/
-├── App.tsx          # Routes and page components
-├── api.ts           # API client with typed methods
-├── types.ts         # TypeScript interfaces
-├── main.tsx         # React entry point
-└── index.css        # Global styles with CSS variables
-```
-
-### API Client
-
-The `api.ts` module provides a typed interface to the backend:
-
-```typescript
-class ApiClient {
-  getPosts(page, limit, category): Promise<PaginatedResponse>;
-  getPost(slug): Promise<Post>;
-  createPost(data): Promise<Post>;
-  updatePost(slug, data): Promise<Post>;
-  deletePost(slug): Promise<{ success: boolean }>;
-  importPosts(file): Promise<ImportResult>;
-  getExportUrl(): string;
-}
-```
-
-### Styling Approach
-
-- CSS Custom Properties for theming
-- Dark theme with accent color (#ff6b35)
-- Responsive design with mobile-first approach
-- CSS animations for loading states and transitions
-
-## Security Considerations
-
-1. **Input Validation** - All inputs validated before database operations
-2. **SQL Injection Prevention** - Parameterized queries via D1 bindings
-3. **CORS** - Configured for API routes only
-4. **Content-Type Validation** - Multipart form data for file uploads
-5. **Error Handling** - Errors logged server-side, sanitized for client
-
-## Deployment Pipeline
-
-```
-npm run build          # Build frontend (Vite)
+browser or crawler
         │
         ▼
-npm run deploy         # Deploy to Cloudflare
-        │
+Workers static asset router
+  /assets/*, /og-default.png, /favicon.svg, /vite.svg
+        │ served directly
         ▼
-┌───────────────────────────────────────┐
-│ Wrangler bundles:                     │
-│   - Worker code (src/index.ts)        │
-│   - Static assets (client/dist/)      │
-└───────────────────────────────────────┘
+Worker (run_worker_first for everything else)
+  ├─ GET /                         HTML list of published posts
+  ├─ GET /blog/:slug               HTML article, or 404
+  ├─ GET /posts/:slug, /post/:slug 301 → /blog/:slug
+  ├─ GET /sitemap.xml /robots.txt /rss.xml
+  ├─ GET /media/:key               R2 object
+  ├─ /api/*                        JSON, cookie or bearer auth
+  └─ GET /adminauthor              client/dist/index.html
         │
-        ▼
-    Cloudflare Edge
+        ├── D1 binding DB
+        └── R2 binding MEDIA
 ```
 
-## Monitoring & Debugging
+`not_found_handling` stays `single-page-application` so the admin app can load its shell. `run_worker_first` is required. Without it, `/` is the static `index.html` (a generic title) and navigation requests for unknown paths never reach the Worker, which is why `/sitemap.xml` used to return the SPA shell.
 
-- **Wrangler Logs**: `wrangler tail` for real-time logs
-- **Console Logging**: Server-side errors logged to console
-- **D1 Metrics**: Available in Cloudflare dashboard
-- **Worker Analytics**: Request counts, CPU time, errors
+## Request paths
 
-## Future Enhancements
+Public HTML is a string template in `src/render.ts`. It does not hydrate React. The document includes a unique title, description, canonical URL, Open Graph and Twitter tags, JSON-LD where relevant, and an RSS autodiscovery link. Post pages include the sanitized article HTML in the first response. Markdown is rendered with `marked`. Raw HTML in the markdown is dropped, and link and image URLs are limited to `http`, `https`, site-relative paths, and `mailto`.
 
-Potential improvements for the platform:
+A tiny inline script in the head sets `data-theme` from `localStorage` or `prefers-color-scheme` before the stylesheet is applied, so the theme does not flash. The toggle writes the same key. System fonts are used on public pages. Images declare width and height; list thumbnails and markdown images are lazy. The cover is eager because it is the largest element on the post page.
 
-1. **Authentication** - Add user authentication (Cloudflare Access, JWT)
-2. **Rate Limiting** - Implement rate limiting middleware
-3. **Image Uploads** - Integrate with R2 for image storage
-4. **Full-Text Search** - Add FTS5 search capabilities
-5. **Caching** - Add KV or Cache API for frequently accessed posts
-6. **Analytics** - Track post views with Analytics Engine
-7. **Comments** - Add commenting system with D1
-8. **RSS Feed** - Generate RSS/Atom feeds for posts
+Drafts (`draft = 1`) are excluded from HTML lists, the sitemap, RSS, and unauthenticated API reads. `/blog/<draft-slug>` returns 404. A valid bearer token or admin session can still read and edit them.
+
+Unknown public URLs return 404 HTML. Hashed files under `/assets/` and the default social image are static assets.
+
+## Data
+
+Live table, after `migrations/0001_post_seo_fields.sql`:
+
+| Column | Notes |
+| --- | --- |
+| id, slug, title, content, tags, category, image_url, created_at, updated_at | Original columns. `content` is markdown. |
+| excerpt | Optional meta description. Derived from `content` when null. |
+| cover_image_url | Hosted `/media/...` path, or a legacy external URL copied from `image_url`. |
+| cover_alt | Alt text for the cover and `og:image`. |
+| author | Default `Manivannan Gajendran`. |
+| draft | `0` published, `1` hidden. Default `0`. |
+| published_at | Backfilled from `created_at` for existing rows. |
+
+Index `idx_posts_draft_published` is on `(draft, published_at DESC, created_at DESC)`.
+
+`schema.sql` is the same end state for a brand-new database, including the `updated_at` trigger. Do not execute it on the live database. The migration is additive `ALTER TABLE` plus backfill updates. `scripts/mark-demo-posts-draft.sql` sets `draft = 1` on demo ids 1–5 and does not delete rows.
+
+`SITE_URL` is the wrangler var `https://blog.manig.dev`. Canonical URLs, the sitemap, RSS, and API `url` fields use it. `ADMIN_PASSWORD` and `BLOG_API_TOKEN` are Worker secrets.
+
+## Auth
+
+- Admin login compares the password with `crypto.subtle.timingSafeEqual` over SHA-256 digests, then sets an httpOnly `admin_session` cookie for 24 hours. The session map is per isolate, same as before.
+- `POST`, `PUT`, `PATCH`, and `DELETE /api/posts`, `POST /api/media`, and CSV import call `requireWriter`. A present `Authorization` header must be `Bearer <BLOG_API_TOKEN>`. If the header is absent, the admin cookie is accepted. A wrong bearer token is 401 and does not fall through to the cookie.
+- Writes use bound parameters. Cover fetches reject non-public hosts, credentials in the URL, and bodies that are not PNG, JPEG, WebP, or GIF under 5 MB.
+
+## Media
+
+Uploads are stored at `covers/<uuid>.<ext>` in R2 with a content type taken from the magic bytes. `GET /media/<key>` streams the object with `Cache-Control: public, max-age=31536000, immutable`. Replacing a cover deletes the previous `/media/` object.
+
+## Code map
+
+| Path | Role |
+| --- | --- |
+| `src/index.ts` | Routes |
+| `src/posts.ts` | Validation and D1 queries |
+| `src/render.ts` | HTML pages |
+| `src/markdown.ts` | Markdown to sanitized HTML |
+| `src/media.ts` | Image checks, R2, `/media` |
+| `src/auth.ts` | Password, bearer token, session |
+| `src/feeds.ts` | Sitemap, robots, RSS |
+| `client/` | Admin SPA only |
+| `migrations/` | D1 migrations for the existing database |
+| `test/blog.spec.ts` | Worker tests via `@cloudflare/vitest-plugin` (Miniflare) |
+
+`npm run build` writes `client/dist`. `npm run deploy` is that build plus `wrangler deploy`.
+
+Observability logs and traces are enabled in `wrangler.toml`. Application errors are logged as JSON with `console.error` and are not returned to the client.

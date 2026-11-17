@@ -9,6 +9,13 @@ export interface Post {
   image_url: string | null;
   created_at: string;
   updated_at: string;
+  excerpt?: string | null;
+  cover_image_url?: string | null;
+  cover_alt?: string | null;
+  author?: string | null;
+  draft?: boolean | number;
+  published_at?: string | null;
+  url?: string;
 }
 
 // Post creation input

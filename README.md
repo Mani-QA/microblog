@@ -1,256 +1,96 @@
-# Microblog - Serverless Microblogging Platform
+# Mani G — blog.manig.dev
 
-A modern, serverless microblogging platform built with **Cloudflare Workers**, **Hono**, **React (Vite)**, and **D1 Database**.
+Personal blog for Manivannan Gajendran. Published posts are server-rendered HTML, so a browser with JavaScript turned off and a search crawler both see the title, description, and article. Drafts stay out of the site, the sitemap, the RSS feed, and the public API.
 
-![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare)
-![Hono](https://img.shields.io/badge/Hono-API-E36002)
-![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript)
+The admin UI at `/adminauthor` and CSV import still work. A content-writer bot can publish through `POST /api/posts` with `BLOG_API_TOKEN`. The contract is in [docs/API.md](docs/API.md). How the Worker is put together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Features
+## What you can do
 
-- 🚀 **Serverless Architecture** - Runs on Cloudflare's global edge network
-- 📝 **Full CRUD API** - Create, read, update, and delete blog posts
-- 🔐 **Admin Panel** - Password-protected admin interface at `/adminauthor`
-- 📤 **Bulk Import** - Import posts from CSV files with upsert logic
-- 📥 **Bulk Export** - Stream export posts to CSV
-- 🔄 **Read Replicas** - D1 read replication for improved performance
-- ⚡ **Fast Frontend** - React + Vite with modern, beautiful UI
-- 🎨 **Dark Theme** - Elegant dark mode design with accent colors
-- 📱 **Responsive** - Works on all device sizes
-- 🔍 **SEO Optimized** - Semantic HTML and meta tags
+- Read the blog at [https://blog.manig.dev](https://blog.manig.dev). Each post lives at `/blog/<slug>`.
+- Switch light and dark mode. The choice is remembered on that browser.
+- Subscribe at `/rss.xml`. Crawlers can use `/sitemap.xml` and `/robots.txt`.
+- Sign in at `/adminauthor` with the `ADMIN_PASSWORD` secret to create, edit, delete, import, and export posts.
+- Post from a script with `Authorization: Bearer <BLOG_API_TOKEN>`. Covers are stored in R2 and served from `/media/...`.
 
-## Architecture
+## Deploy
 
-```
-microblog/
-├── src/                    # Backend (Cloudflare Worker)
-│   ├── index.ts           # Hono API routes
-│   └── types.ts           # TypeScript types
-├── client/                 # Frontend (React + Vite)
-│   ├── src/
-│   │   ├── App.tsx        # Main React app
-│   │   ├── api.ts         # API client helper
-│   │   ├── types.ts       # Shared types
-│   │   └── index.css      # Styles
-│   ├── index.html
-│   └── vite.config.ts
-├── schema.sql             # D1 database schema
-├── wrangler.toml          # Cloudflare Worker config
-└── package.json           # Root dependencies
-```
+This Worker is `microblog`. The D1 database is `blog-db` (`51d64d29-a518-457a-95b1-fff58c072bed`). Do not change either id. `BLOG_API_TOKEN` and the R2 bucket `microblog-media` are already on the Cloudflare account. This repo only declares the bindings.
 
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) 18+
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) (Cloudflare Workers CLI)
-- Cloudflare account
-
-## Quick Start
-
-### 1. Install Dependencies
+From a machine that is logged in to Cloudflare (`npx wrangler login`), in this order:
 
 ```bash
-# Install root dependencies (backend)
 npm install
+npm install --prefix client
 
-# Install client dependencies
-cd client && npm install && cd ..
-```
+# Add excerpt, cover, author, draft, and published_at. Does not delete posts.
+npx wrangler d1 migrations apply blog-db --remote
 
-### 2. Create D1 Database
+# Hide the five original demo posts (ids 1–5). Does not delete them.
+npx wrangler d1 execute blog-db --remote --file=./scripts/mark-demo-posts-draft.sql
 
-```bash
-# Create the D1 database
-npm run db:create
-
-# Note the database_id from the output and update wrangler.toml
-```
-
-### 3. Update Configuration
-
-Edit `wrangler.toml` and replace `YOUR_DATABASE_ID_HERE` with your actual database ID:
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "blog-db"
-database_id = "your-actual-database-id"
-```
-
-### 4. Run Database Migration
-
-```bash
-# Run locally
-npm run db:migrate:local
-
-# Run on production
-npm run db:migrate
-```
-
-### 5. Development
-
-```bash
-# Run the full stack in development mode
-npm run dev
-
-# Or run frontend and backend separately:
-# Terminal 1: Backend
-npm run dev
-
-# Terminal 2: Frontend (in /client directory)
-npm run dev:client
-```
-
-The app will be available at `http://localhost:8787`
-
-### 6. Deploy
-
-```bash
-# Build frontend and deploy to Cloudflare
+# Build the admin UI and deploy the Worker.
 npm run deploy
 ```
 
-## API Endpoints
+`wrangler d1 migrations apply` asks for confirmation on an interactive terminal. The migration is `migrations/0001_post_seo_fields.sql`. Run it before `npm run deploy`. The new Worker selects the new columns, so deploying first will fail those queries until the migration has been applied.
 
-### Posts CRUD
+Do not run `schema.sql` against the live database. That file is the full schema for an empty database. The live table already exists; the migration only adds columns.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/posts` | List posts (paginated) |
-| `GET` | `/api/posts/:slug` | Get single post |
-| `POST` | `/api/posts` | Create a post |
-| `PUT` | `/api/posts/:slug` | Update a post |
-| `DELETE` | `/api/posts/:slug` | Delete a post |
+Secrets (already set on the live Worker, never commit them):
 
-### Bulk Operations
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/posts/import` | Import posts from CSV |
-| `GET` | `/api/posts/export` | Export posts to CSV |
-
-### Query Parameters
-
-**GET /api/posts**
-- `page` - Page number (default: 1)
-- `limit` - Items per page (default: 10, max: 100)
-- `category` - Filter by category
-
-## Admin Panel
-
-Access the admin panel at `/adminauthor` to manage your blog posts.
-
-### Features
-- 🔐 **Secure Login** - Password-protected with SHA-256 hashing
-- ➕ **Create Posts** - Rich form with auto-slug generation
-- ✏️ **Edit Posts** - Update existing posts
-- 🗑️ **Delete Posts** - Remove posts with confirmation
-- 📤 **CSV Import** - Bulk import posts from CSV files
-- 📥 **CSV Export** - Download all posts as CSV
-
-### Default Credentials
-- **URL**: `/adminauthor`
-- **Password**: Set via environment variable (see below)
-
-### Setting the Admin Password
-
-**Local Development** - Create `.dev.vars` file:
-```env
-ADMIN_PASSWORD=your-secure-password-here
-```
-
-**Production** - Use Cloudflare secrets:
 ```bash
-# Set the secret
 npx wrangler secret put ADMIN_PASSWORD
-
-# Or with echo (careful with shell history)
-echo "your-password" | npx wrangler secret put ADMIN_PASSWORD
+npx wrangler secret put BLOG_API_TOKEN
 ```
 
-> ⚠️ **Security**: The password is stored as a Cloudflare secret, never in source code. The `.dev.vars` file is git-ignored.
+## Local development
 
-### Authentication
-- Password is hashed using SHA-256 (never stored in plain text)
-- Session tokens are stored in HTTP-only cookies
-- Sessions expire after 24 hours
-- Protected endpoints: POST, PUT, DELETE operations
+```bash
+npm install
+npm install --prefix client
+cp .dev.vars.example .dev.vars   # then put real local passwords in .dev.vars
 
-## CSV Import Format
+npx wrangler d1 migrations apply blog-db --local
+npm run build
+npm run dev
+```
 
-Create a CSV file with the following columns:
+The site is at `http://localhost:8787`. Public pages come from the Worker. The admin bundle is the Vite build in `client/dist`, so run `npm run build` again after admin UI changes. `npm run dev:client` is only the Vite dev server and proxies `/api` to port 8787.
+
+Checks:
+
+```bash
+npm test
+npm run typecheck
+```
+
+## Posting
+
+```bash
+curl -sS -X POST https://blog.manig.dev/api/posts \
+  -H "Authorization: Bearer $BLOG_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "A note",
+    "excerpt": "One sentence for the meta description.",
+    "content_md": "The post body, in markdown.",
+    "tags": ["notes"]
+  }'
+```
+
+A successful create returns **201** and `{ "id", "slug", "url", "draft", "cover_image_url" }`. `url` is `https://blog.manig.dev/blog/<slug>`. If you omit `slug`, it is derived from the title. If that slug already exists, the response is **409**. The API does not add a numeric suffix.
+
+Cover images can be `cover_image_base64`, `cover_image_url` (downloaded and copied into R2), or a multipart field `cover_image`. Details, limits, and update semantics are in [docs/API.md](docs/API.md).
+
+Old links such as `/posts/<slug>` and `/post/<slug>` redirect to `/blog/<slug>`.
+
+## CSV import
+
+The admin import still accepts:
 
 ```csv
 slug,title,content,tags,category,image_url
-my-first-post,My First Post,This is the content...,tech,Technology,https://example.com/image.jpg
+my-note,My note,Hello,notes,Notes,
 ```
 
-Required columns: `slug`, `title`, `content`
-Optional columns: `tags`, `category`, `image_url`
-
-### Import via cURL
-
-```bash
-curl -X POST http://localhost:8787/api/posts/import \
-  -F "file=@posts.csv"
-```
-
-## Post Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | integer | Auto-incremented primary key |
-| `slug` | string | Unique URL-friendly identifier |
-| `title` | string | Post title |
-| `content` | string | Post content |
-| `tags` | string | Comma-separated tags |
-| `category` | string | Post category |
-| `image_url` | string | Featured image URL |
-| `created_at` | datetime | Creation timestamp |
-| `updated_at` | datetime | Last update timestamp |
-
-## Technology Stack
-
-### Backend
-- **[Hono](https://hono.dev/)** - Ultrafast web framework for Cloudflare Workers
-- **[Cloudflare D1](https://developers.cloudflare.com/d1/)** - Serverless SQLite database
-- **[PapaParse](https://www.papaparse.com/)** - CSV parsing library
-
-### Frontend
-- **[React 18](https://react.dev/)** - UI library
-- **[Vite](https://vitejs.dev/)** - Build tool
-- **[React Router](https://reactrouter.com/)** - Client-side routing
-- **TypeScript** - Type safety
-
-### Infrastructure
-- **[Cloudflare Workers](https://workers.cloudflare.com/)** - Serverless compute
-- **Workers Assets** - Static asset serving with SPA support
-- **D1 Read Replicas** - Distributed read performance
-
-## Development Notes
-
-### Local Database
-
-Wrangler creates a local SQLite database in `.wrangler/` for development. This is separate from your production database.
-
-### Environment Variables
-
-Create a `.dev.vars` file for local development secrets:
-
-```env
-# Add any secrets here (not needed for basic setup)
-```
-
-### Deployment Regions
-
-Cloudflare Workers run on 300+ edge locations globally. D1 read replicas distribute read queries across multiple regions for improved latency.
-
-## License
-
-MIT License - feel free to use this project as a template for your own applications.
-
----
-
-Built with ❤️ using Cloudflare Workers
-
+`slug`, `title`, and `content` are required. New rows are published. Importing a slug that already exists updates the text and does not change its draft flag.

@@ -1,5 +1,7 @@
--- Microblog Database Schema
--- Posts table for storing blog posts
+-- Full schema for a brand-new D1 database.
+-- The live database already has `posts`. Upgrade it with
+-- `wrangler d1 migrations apply blog-db --remote` (migrations/0001_post_seo_fields.sql).
+-- Do not run this file against the live database.
 
 CREATE TABLE IF NOT EXISTS posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10,22 +12,22 @@ CREATE TABLE IF NOT EXISTS posts (
     category TEXT,
     image_url TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    excerpt TEXT,
+    cover_image_url TEXT,
+    cover_alt TEXT,
+    author TEXT DEFAULT 'Manivannan Gajendran',
+    draft INTEGER NOT NULL DEFAULT 0,
+    published_at DATETIME
 );
 
--- Index on slug for fast lookups and upsert operations
 CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
-
--- Index on category for filtering posts by category
 CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category);
-
--- Index on created_at for sorting and pagination
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_draft_published ON posts(draft, published_at DESC, created_at DESC);
 
--- Trigger to auto-update updated_at timestamp
-CREATE TRIGGER IF NOT EXISTS update_posts_timestamp 
+CREATE TRIGGER IF NOT EXISTS update_posts_timestamp
 AFTER UPDATE ON posts
 BEGIN
     UPDATE posts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
-
