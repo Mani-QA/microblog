@@ -422,8 +422,17 @@ async function publicTagCounts(env: Env): Promise<{ tag: string; count: number }
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
+// Posts the author marks as popular carry the `trending` tag; they are listed at /trending.
+app.get('/trending', async (c) => {
+  const page = positiveInt(c.req.query('page'), 1, 100000);
+  const limit = 20;
+  const { posts, total } = await listPosts(c.env, { page, limit, tag: 'trending', includeDrafts: false });
+  return renderFilter(c.env, 'Trending', 'trending', posts, page, Math.max(1, Math.ceil(total / limit)));
+});
+
 app.get('/tags/:name', async (c) => {
   const name = c.req.param('name');
+  if (name.toLowerCase() === 'trending') return c.redirect('/trending', 301);
   const page = positiveInt(c.req.query('page'), 1, 100000);
   const limit = 20;
   const { posts, total } = await listPosts(c.env, { page, limit, tag: name, includeDrafts: false });
