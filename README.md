@@ -1,4 +1,4 @@
-# Mani G — blog.manig.dev
+# ManiG Blog — blog.manig.dev
 
 Personal blog for Manivannan Gajendran. Published posts are server-rendered HTML, so a browser with JavaScript turned off and a search crawler both see the title, description, and article. Drafts stay out of the site, the sitemap, the RSS feed, and the public API.
 

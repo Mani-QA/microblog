@@ -1,4 +1,4 @@
-export const SITE_NAME = 'Mani G';
+export const SITE_NAME = 'ManiG Blog';
 export const DEFAULT_AUTHOR = 'Manivannan Gajendran';
 export const DEFAULT_DESCRIPTION = 'Writing by Manivannan Gajendran.';
 export const MAX_EXCERPT = 300;
