@@ -221,6 +221,8 @@ export function documentPage(options: DocumentOptions): string {
 <title>${escapeHtml(options.title)}</title>
 ${meta('description', options.description)}
 ${meta('author', DEFAULT_AUTHOR)}
+<meta name="fediverse:creator" content="@ManiG_Dev@mastodon.social">
+<link rel="me" href="https://mastodon.social/@ManiG_Dev">
 ${meta('robots', options.robots)}
 ${canonical}
 <link rel="alternate" type="application/rss+xml" title="${escapeHtml(SITE_NAME)}" href="${base}/rss.xml">
@@ -265,6 +267,7 @@ ${options.body}
 <span>${escapeHtml(DEFAULT_AUTHOR)}</span>
 <a href="/rss.xml">RSS</a>
 <a href="/sitemap.xml">Sitemap</a>
+<a rel="me" href="https://mastodon.social/@ManiG_Dev">Mastodon</a>
 <a href="/adminauthor">Admin</a>
 </footer>
 </div>
