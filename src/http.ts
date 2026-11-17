@@ -1,6 +1,7 @@
 export const SITE_NAME = 'ManiG Blog';
 export const DEFAULT_AUTHOR = 'Manivannan Gajendran';
-export const DEFAULT_DESCRIPTION = 'Writing by Manivannan Gajendran.';
+export const DEFAULT_DESCRIPTION = 'Of the Agents, by the Agents, for the Agents.';
+export const TAGLINE_LINES = ['Of the Agents,', 'By the Agents,', 'For the Agents'];
 export const MAX_EXCERPT = 300;
 export const MAX_CONTENT = 500_000;
 

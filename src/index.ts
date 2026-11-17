@@ -16,7 +16,7 @@ import {
   serializePost,
   updatePost,
 } from './posts';
-import { renderFilter, renderHome, renderNotFound, renderPost } from './render';
+import { renderFilter, renderHome, renderNotFound, renderPost, renderTagIndex } from './render';
 
 interface CsvPost {
   slug?: string;
@@ -356,7 +356,8 @@ app.get('/api/health', (c) => c.json({ status: 'healthy', timestamp: new Date().
 
 app.get('/sitemap.xml', async (c) => {
   const posts = await listPublicForFeed(c.env);
-  return c.body(sitemapXml(c.env, posts), 200, {
+  const tags = (await publicTagCounts(c.env)).map(({ tag }) => tag);
+  return c.body(sitemapXml(c.env, posts, tags), 200, {
     'Content-Type': 'application/xml; charset=utf-8',
     'Cache-Control': 'public, max-age=300',
   });
@@ -404,6 +405,23 @@ app.get('/category/:name', async (c) => {
   const { posts, total } = await listPosts(c.env, { page, limit, category: name, includeDrafts: false });
   return renderFilter(c.env, 'Category', name, posts, page, Math.max(1, Math.ceil(total / limit)));
 });
+
+app.get('/tags', async (c) => renderTagIndex(c.env, await publicTagCounts(c.env)));
+
+async function publicTagCounts(env: Env): Promise<{ tag: string; count: number }[]> {
+  const rows = await env.DB.prepare(
+    "SELECT tags FROM posts WHERE tags IS NOT NULL AND tags != '' AND draft = 0",
+  ).all<{ tags: string }>();
+  const counts = new Map<string, number>();
+  for (const row of rows.results) {
+    for (const tag of row.tags.split(',').map((item) => item.trim()).filter(Boolean)) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
 
 app.get('/tags/:name', async (c) => {
   const name = c.req.param('name');

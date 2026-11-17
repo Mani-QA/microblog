@@ -393,3 +393,25 @@ describe('machine API', () => {
     expect(await page.text()).toContain('Imported body text');
   });
 });
+
+describe('tags', () => {
+  it('links tags on list rows, filters by any tag, and lists tags', async () => {
+    const created = await api('/api/posts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ title: 'Tagged Post', slug: 'tagged-post', content_md: 'Tagged body.', tags: ['agents', 'mcp tools'] }),
+    });
+    expect(created.status).toBe(201);
+    const home = await (await api('/')).text();
+    expect(home).toContain('Of the Agents,<br>By the Agents,<br>For the Agents');
+    expect(home).toContain('href="/tags/mcp%20tools">#mcp tools</a>');
+    const second = await (await api('/tags/mcp%20tools')).text();
+    expect(second).toContain('Tagged Post');
+    const index = await api('/tags');
+    expect(index.status).toBe(200);
+    const indexHtml = await index.text();
+    expect(indexHtml).toContain('href="/tags/agents">#agents</a>');
+    const sitemap = await (await api('/sitemap.xml')).text();
+    expect(sitemap).toContain('/tags/agents</loc>');
+  });
+});

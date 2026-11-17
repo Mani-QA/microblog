@@ -2,6 +2,7 @@ import {
   DEFAULT_AUTHOR,
   DEFAULT_DESCRIPTION,
   SITE_NAME,
+  TAGLINE_LINES,
   absoluteUrl,
   escapeHtml,
   formatDate,
@@ -138,6 +139,12 @@ h1 { font-size: clamp(2rem, 5vw, 2.75rem); line-height: 1.15; letter-spacing: -0
 .tags { display: flex; flex-wrap: wrap; gap: 0.55rem; }
 .tags a { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
 .tags a:hover { color: var(--accent); }
+.post-row .tags { margin-top: 0.6rem; }
+.tagline { font-style: italic; line-height: 1.5; }
+.tag-index { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; }
+.tag-index a { text-decoration: none; font-size: 1.05rem; }
+.tag-index a:hover { color: var(--accent); }
+.tag-index .count { color: var(--faint); font-size: 0.85rem; margin-left: 0.3rem; }
 .prose { font-size: 1.125rem; line-height: 1.75; }
 .prose > :first-child { margin-top: 0; }
 .prose h2, .prose h3, .prose h4 { line-height: 1.25; letter-spacing: -0.02em; font-weight: 500; margin: 2rem 0 0.6rem; }
@@ -246,6 +253,7 @@ ${options.home ? `<h1 class="wordmark"><a href="/">${SITE_NAME}</a></h1>` : `<a 
 <div class="nav-row">
 <nav aria-label="Site">
 <a href="/">Writing</a>
+<a href="/tags">Tags</a>
 <a href="/rss.xml">RSS</a>
 <a href="/sitemap.xml">Sitemap</a>
 </nav>
@@ -335,6 +343,7 @@ ${thumb}
 <p class="meta"><time datetime="${escapeHtml(toIso(when) || '')}">${escapeHtml(formatDate(when))}</time></p>
 <h2><a class="title" href="/blog/${encodeURIComponent(post.slug)}">${escapeHtml(post.title)}</a></h2>
 <p class="excerpt">${escapeHtml(oneLine(publicExcerpt(post)))}</p>
+${tagsHtml(post.tags)}
 </div>
 </li>`;
 }
@@ -350,7 +359,7 @@ export function renderHome(env: Env, posts: PostRow[], page: number, totalPages:
   const older = page < totalPages ? `<a href="/?page=${page + 1}" rel="next">Older</a>` : '<span></span>';
   const pager = totalPages > 1 ? `<nav class="pager" aria-label="Pagination">${newer}<span>Page ${page} of ${totalPages}</span>${older}</nav>` : '';
   const body = `<main id="main">
-<p class="lede">${escapeHtml(description)}</p>
+<p class="lede tagline">${TAGLINE_LINES.map((line) => escapeHtml(line)).join('<br>')}</p>
 ${list}
 ${pager}
 </main>`;
@@ -478,6 +487,29 @@ export function renderNotFound(env: Env): Response {
     description: 'That page is not on this blog.',
     canonical: null,
     robots: 'noindex',
+    type: 'website',
+    image: defaultImage(env),
+    imageAlt: SITE_NAME,
+    body,
+  });
+}
+
+
+export function renderTagIndex(env: Env, tags: { tag: string; count: number }[]): Response {
+  const base = siteUrl(env);
+  const list = tags.length
+    ? `<ul class="tag-index">${tags.map(({ tag, count }) => `<li><a href="/tags/${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a><span class="count">${count}</span></li>`).join('')}</ul>`
+    : '<p class="empty">No tags yet.</p>';
+  const body = `<main id="main">
+<p class="back"><a href="/">← All writing</a></p>
+<h1>Tags</h1>
+${list}
+</main>`;
+  return shell(env, {
+    title: `Tags · ${SITE_NAME}`,
+    description: `All tags on ${SITE_NAME}.`,
+    canonical: `${base}/tags`,
+    robots: 'index,follow',
     type: 'website',
     image: defaultImage(env),
     imageAlt: SITE_NAME,
