@@ -1,27 +1,33 @@
 {
   "name": "microblog",
   "version": "1.0.0",
-  "description": "Serverless Microblogging Platform using Cloudflare Workers, Hono, React, and D1",
+  "description": "Personal blog for Mani G on Cloudflare Workers, Hono, D1, and R2",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "dev:client": "npm run dev --prefix client",
     "build": "npm run build --prefix client",
     "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types",
     "db:create": "wrangler d1 create blog-db",
-    "db:migrate": "wrangler d1 execute blog-db --file=./schema.sql",
-    "db:migrate:local": "wrangler d1 execute blog-db --file=./schema.sql --local",
+    "db:migrate:local": "wrangler d1 migrations apply blog-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply blog-db --remote",
+    "db:schema:local": "wrangler d1 execute blog-db --local --file=./schema.sql",
     "preview": "npm run build && wrangler dev"
   },
   "dependencies": {
-    "hono": "^4.6.12",
-    "papaparse": "^5.4.1"
+    "hono": "^4.13.19",
+    "marked": "^18.2.1",
+    "papaparse": "^5.7.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241127.0",
-    "@types/papaparse": "^5.3.15",
-    "typescript": "^5.7.2",
-    "wrangler": "^4.54.0"
+    "@cloudflare/vitest-plugin": "^1.8.3",
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.163.0"
   },
   "engines": {
     "node": ">=18.0.0"

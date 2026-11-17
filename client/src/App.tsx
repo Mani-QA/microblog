@@ -49,8 +49,8 @@ function HomePage() {
   return (
     <div className="home-page">
       <header className="hero">
-        <h1>Microblog</h1>
-        <p className="tagline">A serverless blogging platform powered by Cloudflare</p>
+        <h1>Mani G</h1>
+        <p className="tagline">Writing by Manivannan Gajendran</p>
       </header>
 
       <main className="posts-container">
@@ -130,19 +130,20 @@ function getExcerpt(markdown: string, maxLength = 200): string {
 
 // Post Card Component with clickable category and tags
 function PostCard({ post }: { post: Post }) {
-  const formattedDate = new Date(post.created_at).toLocaleDateString('en-US', {
+  const formattedDate = new Date(post.published_at || post.created_at).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
 
   const tags = post.tags?.split(',').map((t) => t.trim()).filter(Boolean) || [];
+  const image = post.cover_image_url || post.image_url;
 
   return (
     <article className="post-card">
-      {post.image_url && (
+      {image && (
         <div className="post-image">
-          <img src={post.image_url} alt={post.title} loading="lazy" />
+          <img src={image} alt={post.cover_alt || post.title} width={1200} height={630} loading="lazy" />
         </div>
       )}
       <div className="post-content">
@@ -155,11 +156,11 @@ function PostCard({ post }: { post: Post }) {
           </Link>
         )}
         <h2>
-          <Link to={`/posts/${post.slug}`}>{post.title}</Link>
+          <Link to={`/blog/${post.slug}`}>{post.title}</Link>
         </h2>
         <p className="excerpt">{getExcerpt(post.content)}</p>
         <footer className="post-meta">
-          <time dateTime={post.created_at}>{formattedDate}</time>
+          <time dateTime={post.published_at || post.created_at}>{formattedDate}</time>
           {tags.length > 0 && (
             <div className="tags">
               {tags.map((tag) => (
@@ -392,13 +393,14 @@ function PostPage() {
     );
   }
 
-  const formattedDate = new Date(post.created_at).toLocaleDateString('en-US', {
+  const formattedDate = new Date(post.published_at || post.created_at).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
 
   const tags = post.tags?.split(',').map((t) => t.trim()).filter(Boolean) || [];
+  const image = post.cover_image_url || post.image_url;
 
   return (
     <div className="post-page">
@@ -407,9 +409,9 @@ function PostPage() {
       </nav>
 
       <article className="post-full">
-        {post.image_url && (
+        {image && (
           <div className="post-hero-image">
-            <img src={post.image_url} alt={post.title} />
+            <img src={image} alt={post.cover_alt || post.title} width={1200} height={630} />
           </div>
         )}
 
@@ -424,7 +426,7 @@ function PostPage() {
           )}
           <h1>{post.title}</h1>
           <div className="post-meta">
-            <time dateTime={post.created_at}>{formattedDate}</time>
+            <time dateTime={post.published_at || post.created_at}>{formattedDate}</time>
             {tags.length > 0 && (
               <div className="tags">
                 {tags.map((tag) => (
@@ -455,6 +457,7 @@ function App() {
     <div className="app">
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/blog/:slug" element={<PostPage />} />
         <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/category/:name" element={<CategoryPage />} />
         <Route path="/tags/:name" element={<TagsPage />} />
