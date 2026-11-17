@@ -412,6 +412,6 @@ describe('tags', () => {
     const indexHtml = await index.text();
     expect(indexHtml).toContain('href="/tags/agents">#agents</a>');
     const sitemap = await (await api('/sitemap.xml')).text();
-    expect(sitemap).toContain('/tags/agents</loc>');
+    expect(sitemap).not.toContain('/tags');
   });
 });
