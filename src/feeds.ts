@@ -5,7 +5,7 @@ function lastModified(post: PostRow): string | null {
   return toIso(post.updated_at) || toIso(post.published_at) || toIso(post.created_at);
 }
 
-export function sitemapXml(env: Env, posts: PostRow[], tags: string[] = []): string {
+export function sitemapXml(env: Env, posts: PostRow[]): string {
   const base = siteUrl(env);
   const latest = posts.reduce<string | null>((current, post) => {
     const value = lastModified(post);
@@ -22,7 +22,7 @@ export function sitemapXml(env: Env, posts: PostRow[], tags: string[] = []): str
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url><loc>${escapeXml(`${base}/`)}</loc>${home}</url>
 ${urls}
-${tags.length ? `<url><loc>${escapeXml(`${base}/tags`)}</loc></url>` : ''}${tags.map((tag) => `<url><loc>${escapeXml(`${base}/tags/${encodeURIComponent(tag)}`)}</loc></url>`).join('')}
+
 </urlset>`;
 }
 

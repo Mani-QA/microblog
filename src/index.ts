@@ -356,8 +356,7 @@ app.get('/api/health', (c) => c.json({ status: 'healthy', timestamp: new Date().
 
 app.get('/sitemap.xml', async (c) => {
   const posts = await listPublicForFeed(c.env);
-  const tags = (await publicTagCounts(c.env)).map(({ tag }) => tag);
-  return c.body(sitemapXml(c.env, posts, tags), 200, {
+  return c.body(sitemapXml(c.env, posts), 200, {
     'Content-Type': 'application/xml; charset=utf-8',
     'Cache-Control': 'public, max-age=300',
   });
