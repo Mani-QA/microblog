@@ -66,7 +66,7 @@ function drawText(text, x, y, scale, color) {
 fill(0x1c, 0x19, 0x17);
 const ink = [0xfa, 0xf7, 0xf2];
 const accent = [0xe8, 0x8a, 0x4a];
-const title = 'Mani G';
+const title = 'ManiG Blog';
 const subtitle = 'blog.manig.dev';
 const titleScale = 16;
 const subScale = 5;

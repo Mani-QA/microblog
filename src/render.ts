@@ -247,6 +247,7 @@ ${options.home ? `<h1 class="wordmark"><a href="/">${SITE_NAME}</a></h1>` : `<a 
 <nav aria-label="Site">
 <a href="/">Writing</a>
 <a href="/rss.xml">RSS</a>
+<a href="/sitemap.xml">Sitemap</a>
 </nav>
 <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark</button>
 </div>

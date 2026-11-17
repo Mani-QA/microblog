@@ -49,7 +49,7 @@ function HomePage() {
   return (
     <div className="home-page">
       <header className="hero">
-        <h1>Mani G</h1>
+        <h1>ManiG Blog</h1>
         <p className="tagline">Writing by Manivannan Gajendran</p>
       </header>
 
