@@ -167,4 +167,5 @@ curl -sS -X PATCH https://blog.manig.dev/api/posts/notes-on-d1 \
 | `/robots.txt` | Allow `/`, disallow `/admin` and `/api`, `Sitemap` line |
 | `/rss.xml` | RSS 2.0 for published posts, absolute links |
 | `/category/<name>` and `/tags/<name>` | Server-rendered filtered lists |
+| `/trending` | Posts tagged `trending` (author-picked popular posts). `/tags/trending` redirects here. |
 | `/adminauthor` | Existing admin SPA |

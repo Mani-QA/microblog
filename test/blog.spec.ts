@@ -414,4 +414,23 @@ describe('tags', () => {
     const sitemap = await (await api('/sitemap.xml')).text();
     expect(sitemap).not.toContain('/tags');
   });
+
+  it('lists trending posts at /trending and links it in the header', async () => {
+    await api('/api/posts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ title: 'Hot Post', slug: 'hot-post', content_md: 'Hot.', tags: ['agents', 'trending'] }),
+    });
+    await api('/api/posts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ title: 'Quiet Post', slug: 'quiet-post', content_md: 'Quiet.', tags: ['agents'] }),
+    });
+    const res = await api('/trending');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<a href="/tags">Tags</a>\n<a href="/trending">Trending</a>\n<a href="/rss.xml">RSS</a>');
+    expect(html).toContain('Hot Post');
+    expect(html).not.toContain('Quiet Post');
+  });
 });

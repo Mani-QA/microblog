@@ -256,6 +256,7 @@ ${options.home ? `<h1 class="wordmark"><a href="/">${SITE_NAME}</a></h1>` : `<a 
 <nav aria-label="Site">
 <a href="/">Writing</a>
 <a href="/tags">Tags</a>
+<a href="/trending">Trending</a>
 <a href="/rss.xml">RSS</a>
 <a href="/sitemap.xml">Sitemap</a>
 </nav>
@@ -387,12 +388,12 @@ ${pager}
   });
 }
 
-export function renderFilter(env: Env, kind: 'Category' | 'Tag', name: string, posts: PostRow[], page: number, totalPages: number): Response {
+export function renderFilter(env: Env, kind: 'Category' | 'Tag' | 'Trending', name: string, posts: PostRow[], page: number, totalPages: number): Response {
   const base = siteUrl(env);
-  const path = kind === 'Category' ? `/category/${encodeURIComponent(name)}` : `/tags/${encodeURIComponent(name)}`;
+  const path = kind === 'Trending' ? '/trending' : kind === 'Category' ? `/category/${encodeURIComponent(name)}` : `/tags/${encodeURIComponent(name)}`;
   const canonical = page > 1 ? `${base}${path}?page=${page}` : `${base}${path}`;
-  const heading = kind === 'Tag' ? `#${name}` : name;
-  const description = `${kind === 'Tag' ? 'Posts tagged' : 'Posts in'} ${name}.`;
+  const heading = kind === 'Trending' ? 'Trending' : kind === 'Tag' ? `#${name}` : name;
+  const description = kind === 'Trending' ? 'Popular posts on ManiG Blog.' : `${kind === 'Tag' ? 'Posts tagged' : 'Posts in'} ${name}.`;
   const list = posts.length
     ? `<ol class="post-list">${posts.map((post) => rowHtml(env, post)).join('')}</ol>`
     : '<p class="empty">No published posts here.</p>';
@@ -401,7 +402,7 @@ export function renderFilter(env: Env, kind: 'Category' | 'Tag', name: string, p
   const pager = totalPages > 1 ? `<nav class="pager" aria-label="Pagination">${newer}<span>Page ${page} of ${totalPages}</span>${older}</nav>` : '';
   const body = `<main id="main">
 <p class="back"><a href="/">← All writing</a></p>
-<p class="kicker">${kind}</p>
+<p class="kicker">${kind === 'Trending' ? 'Popular' : kind}</p>
 <h1>${escapeHtml(heading)}</h1>
 ${list}
 ${pager}
